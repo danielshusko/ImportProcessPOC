@@ -18,14 +18,15 @@ using Microsoft.EntityFrameworkCore;
 await using var context = new ImportProcessDataContext();
 context.Database.Migrate();
 
-var testCount = 5;
+var testCount = 1;
 List<int> itemCounts = [1, 500, 5000, 25000, 50000, 100000];
 List<Func<ImporterConfig, IImporter>> importerFunctions =
 [
-    config => new DbCteImporter(config),
-    config => new DbJoinImporter(config),
-    config => new DbJoinQueueImporter(config),
-    config => new RetryImporter(config)
+    config => new HierarchyDepthImporter(config)
+    //config => new DbCteImporter(config),
+    //config => new DbJoinImporter(config),
+    // config => new DbJoinQueueImporter(config),
+    // config => new RetryImporter(config)
 ];
 var orders = new[] { "ordered", "random" };
 

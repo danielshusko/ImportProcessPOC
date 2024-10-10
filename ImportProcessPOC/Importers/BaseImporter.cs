@@ -41,5 +41,3 @@ public abstract class BaseImporter : IImporter
 
     protected abstract int ProcessFile(string filePath);
 }
-
-public record ImporterConfig(int ItemCount, bool IsOrdered);

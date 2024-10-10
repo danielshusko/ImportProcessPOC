@@ -8,6 +8,7 @@ public class ImportJobLineDataModel
     public int Id { get; set; }
     public int? ParentId { get; set; }
     public string Line { get; set; }
+    public int HierarchyDepth { get; set; }
 
     public virtual ImportJobDataModel Job { get; set; }
 }

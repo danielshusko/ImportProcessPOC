@@ -106,23 +106,86 @@ public class ImportRepository(SpanMetrics spanMetrics)
         return _context.ImportJobsLines.Count(x => x.JobId == jobId);
     }
 
+    public void SetLineHierarchyDepths(int jobId)
+    {
+        using var span = spanMetrics.CreateSpan("ImportRepository.SetLineHierarchyDepths");
+        var query = @"
+WITH RECURSIVE cte(JobId, Index, Id, ParentId, Line, Path, HierarchyDepth) AS (
+    select 
+    	l1.""JobId"", 
+    	l1.""Index"", 
+    	l1.""Id"", 
+    	l1.""ParentId"", 
+    	l1.""Line"", 
+    	cast(l1.""Id"" as text),
+    	1 as HierarchyDepth
+    from ""importProcessPoc"".""ImportJobLine"" l1
+    where l1.""JobId"" = @jobId
+    and l1.""ParentId"" is null
+  UNION all
+  	select 
+    	l2.""JobId"", 
+    	l2.""Index"", 
+    	l2.""Id"", 
+    	l2.""ParentId"", 
+    	l2.""Line"", 
+  		concat(path, '->', cast(l2.""Id"" as text)),
+  		HierarchyDepth + 1 as HierarchyDepth
+    from ""importProcessPoc"".""ImportJobLine"" l2
+    join cte c on c.Id = l2.""ParentId""
+    where l2.""JobId"" = @jobId
+)
+update ""importProcessPoc"".""ImportJobLine"" l
+set ""HierarchyDepth"" = c.""hierarchydepth""
+from cte c
+where 
+	l.""Id"" = c.""id""
+	and l.""JobId"" = c.""jobid""
+";
+
+        var jobIdParameter = new NpgsqlParameter("jobId", jobId);
+        _context.Database.ExecuteSqlRaw(query, jobIdParameter);
+    }
+
+    public IEnumerable<List<(int, string)>> GetLinesByDepth(int jobId, int batchSize)
+    {
+        var maxDepth = _context.ImportJobsLines
+                               .Where(x => x.JobId == jobId)
+                               .Max(x => x.HierarchyDepth);
+
+        for (var depth = 1; depth <= maxDepth; depth++)
+        {
+            var depthLineCount = _context.ImportJobsLines.Count(x => x.JobId == jobId && x.HierarchyDepth == depth);
+            var batchCount = Math.Ceiling((double) depthLineCount / batchSize);
+            for (var batchIndex = 0; batchIndex < batchCount; batchIndex++)
+            {
+                var batchLines = _context.ImportJobsLines
+                                         .Where(x => x.JobId == jobId && x.HierarchyDepth == depth)
+                                         .Skip(batchIndex * batchSize)
+                                         .Take(batchSize)
+                                         .ToList();
+                yield return batchLines.Select(x => (x.Index, x.Line)).ToList();
+            }
+        }
+    }
+
     public Dictionary<int, string> GetImportLines(int jobId, int pageSize, int pageNumber)
     {
         using var span = spanMetrics.CreateSpan("ImportRepository.GetImportLines");
 
         var query = @"
-WITH RECURSIVE nodes(JobId, Index, Id, ParentId, Line, Path) AS (
-    select ijl.""JobId"", ijl.""Index"", ijl.""Id"", ijl.""ParentId"", ijl.""Line"", cast(ijl.""Id"" as text)
+WITH RECURSIVE nodes(JobId, Index, Id, ParentId, Line, HierarchyDepth, Path) AS (
+    select ijl.""JobId"", ijl.""Index"", ijl.""Id"", ijl.""ParentId"", ijl.""Line"", ijl.""HierarchyDepth"", cast(ijl.""Id"" as text)
     from ""importProcessPoc"".""ImportJobLine"" ijl
     where ijl.""JobId"" = @jobId
     and ijl.""ParentId"" is null
   UNION all
-  	select ijl2.""JobId"", ijl2.""Index"", ijl2.""Id"", ijl2.""ParentId"", ijl2.""Line"", concat(path, '->', cast(ijl2.""Id"" as text))
+  	select ijl2.""JobId"", ijl2.""Index"", ijl2.""Id"", ijl2.""ParentId"", ijl2.""Line"", ijl2.""HierarchyDepth"", concat(path, '->', cast(ijl2.""Id"" as text))
     from ""importProcessPoc"".""ImportJobLine"" ijl2
     join nodes n on n.id = ijl2.""ParentId""
     where ijl2.""JobId"" = @jobId
 )
-select JobId, Index, Id, ParentId, Line, Path
+select JobId, Index, Id, ParentId, Line, HierarchyDepth, Path
 from nodes
 where JobId = @jobId
 order by path
